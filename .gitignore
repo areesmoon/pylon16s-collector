@@ -12,3 +12,5 @@ __pycache__/
 # Logs & System Files
 *.log
 .DS_Store
+
+config.json

@@ -1,16 +1,34 @@
 import serial
 import time
+import json
+import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ==========================================
+# LOAD KONFIGURASI DARI FILE EXTERNAL
+# ==========================================
+CONFIG_FILE = 'config.json'
+
+if not os.path.exists(CONFIG_FILE):
+    print(f"❌ File konfigurasi '{CONFIG_FILE}' tidak ditemukan! Buat dulu file-nya.")
+    exit(1)
+
+with open(CONFIG_FILE, 'r') as f:
+    config = json.load(f)
+
+SERIAL_PORT = config.get("serial_port", "COM9")
+BAUD_RATE = config.get("baud_rate", 9600)
+FIRESTORE_COLLECTION = config.get("firestore_collection", "bms_logs")
+CREDENTIALS_FILE = config.get("credentials_file", "serviceAccountKey.json")
+
+# ==========================================
 # KONFIGURASI FIREBASE & SERIAL
 # ==========================================
-cred = credentials.Certificate("serviceAccountKey.json")
+cred = credentials.Certificate(CREDENTIALS_FILE)
 firebase_admin.initialize_app(cred)
 
 db = firestore.client()
-FIRESTORE_COLLECTION = 'bms_logs'
 
 # SERIAL_PORT = '/dev/ttyUSB0'
 SERIAL_PORT = 'COM9'
