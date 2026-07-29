@@ -1,0 +1,14 @@
+# Firebase & Credentials
+serviceAccountKey.json
+*.json
+
+# Python Virtual Environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs & System Files
+*.log
+.DS_Store
