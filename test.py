@@ -142,7 +142,7 @@ class SGPower16S:
 
 
 if __name__ == "__main__":
-    bms = SGPower16S(port='COM9')
+    bms = SGPower16S(port=SERIAL_PORT)
     data = bms.get_data()
 
     if data:
