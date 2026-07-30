@@ -99,7 +99,7 @@ class SGPower16S:
             current_val = parse_signed_16bit(current_hex)
             print(f"🔍 DEBUG MENTAH ARUS: hex={current_hex} | decimal_signed={current_val}")
 
-            current = current_val / 10.0
+            current = current_val / 1.0
             total_voltage = int(voltage_hex, 16) / 1000.0
 
             # --- BAGIAN KAPASITAS & SOC ---
