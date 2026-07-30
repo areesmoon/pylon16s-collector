@@ -18,6 +18,13 @@ with open(CONFIG_FILE, 'r') as f:
 SERIAL_PORT = config.get("serial_port", "/dev/ttyUSB0")
 BAUD_RATE = config.get("baud_rate", 9600)
 
+def parse_signed_16bit(hex_str):
+    """Helper untuk mengubah hex 16-bit menjadi angka bertanda (Signed Two's Complement)"""
+    val = int(hex_str, 16)
+    if val >= 0x8000:
+        val -= 0x10000
+    return val
+
 class SGPower16S:
     def __init__(self, port=SERIAL_PORT, baudrate=BAUD_RATE, timeout=3):
         self.port = port
@@ -57,14 +64,14 @@ class SGPower16S:
             info_hex = clean_data[1:]
             start_idx = 18
 
-            # 4. Parsing 16 Sel Voltase (Loop murni 16 kali, indentasi sudah dibenerin)
+            # 4. Parsing 16 Sel Voltase
             cell_voltages = []
             for i in range(16):
                 pos = start_idx + (i * 4)
                 mv_val = int(info_hex[pos:pos + 4], 16)
                 cell_voltages.append(mv_val / 1000.0)
 
-            # 5. Parsing Tail Data (Berada di luar loop sel)
+            # 5. Parsing Tail Data
             tail_idx = start_idx + (16 * 4)
             tail = info_hex[tail_idx:]
 
@@ -88,14 +95,11 @@ class SGPower16S:
             # 4 karakter setelah arus adalah TEGANGAN TOTAL (Voltage)
             voltage_hex = tail[offset + 4:offset + 8]
 
-            # Konversi Arus dengan mencetak nilai mentahnya
-            current_val = int(current_hex, 16)
-            print(f"🔍 DEBUG MENTAH ARUS: hex={current_hex} | decimal_asli={current_val}")
+            # Konversi Arus dengan Signed 16-bit (Two's Complement)
+            current_val = parse_signed_16bit(current_hex)
+            print(f"🔍 DEBUG MENTAH ARUS: hex={current_hex} | decimal_signed={current_val}")
 
-            # Coba kita tes balik logikanya:
-            # Kalau sedang discharging tapi aslinya positif, kita kasih tanda minus manual atau cek posisinya
             current = current_val / 10.0
-
             total_voltage = int(voltage_hex, 16) / 1000.0
 
             # --- BAGIAN KAPASITAS & SOC ---
@@ -114,7 +118,7 @@ class SGPower16S:
             total_ah = int(total_hex, 16) / 1000.0
             soc = (remain_ah / total_ah) * 100 if total_ah > 0 else 0
 
-            # Status arah arus
+            # Status arah arus yang akurat (Positif = Charging, Negatif = Discharging, 0 = Standby)
             status_arus = "CHARGING ⚡" if current > 0 else ("DISCHARGING 🔋" if current < 0 else "STANDBY 💤")
 
             # Kembalikan sebagai dictionary yang rapi
