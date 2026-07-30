@@ -2,8 +2,8 @@ import serial
 import time
 import json
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
+import urllib.request
+import urllib.error
 
 # ==========================================
 # LOAD KONFIGURASI DARI FILE EXTERNAL
@@ -17,22 +17,10 @@ if not os.path.exists(CONFIG_FILE):
 with open(CONFIG_FILE, 'r') as f:
     config = json.load(f)
 
-SERIAL_PORT = config.get("serial_port", "COM9")
+SERIAL_PORT = config.get("serial_port", "/dev/ttyUSB0")
 BAUD_RATE = config.get("baud_rate", 9600)
-FIRESTORE_COLLECTION = config.get("firestore_collection", "bms_logs")
-CREDENTIALS_FILE = config.get("credentials_file", "serviceAccountKey.json")
-
-# ==========================================
-# KONFIGURASI FIREBASE & SERIAL
-# ==========================================
-cred = credentials.Certificate(CREDENTIALS_FILE)
-firebase_admin.initialize_app(cred)
-
-db = firestore.client()
-
-# SERIAL_PORT = '/dev/ttyUSB0'
-SERIAL_PORT = 'COM9'
-BAUD_RATE = 9600
+API_ENDPOINT = config.get("api_endpoint", "http://IP_SERVER_NEXTJS:3000/api/bms/update-slave")
+API_SECRET = config.get("api_secret", "")
 
 
 class SGPower16S:
@@ -99,13 +87,12 @@ class SGPower16S:
             current_hex = tail[offset:offset + 4]
             voltage_hex = tail[offset + 4:offset + 8]
 
-            # Ambil nilai mutlak besaran arusnya dari serial
             current_val = int(current_hex, 16)
+            # Tentukan estimasi tanda awal berdasarkan nilai heksadesimal atau biarkan positif dulu
+            # (Di API Next.js nanti bisa disesuaikan atau dibaca mutlak)
             current_abs = abs(current_val / 10.0)
-
             total_voltage = int(voltage_hex, 16) / 1000.0
 
-            # --- BAGIAN KAPASITAS, SOC & CYCLE ---
             user_defined = int(tail[offset + 12:offset + 14], 16)
             cycle_count = int(tail[offset + 18:offset + 22], 16)
 
@@ -120,15 +107,16 @@ class SGPower16S:
             total_ah = int(total_hex, 16) / 1000.0
             soc = (remain_ah / total_ah) * 100 if total_ah > 0 else 0
 
-            # Kembalikan data mentah beserta besaran absolutnya dulu
             raw_data = {
                 "ah": round(remain_ah, 2),
                 "soc": round(soc, 1),
                 "voltage": round(total_voltage, 2),
-                "current_abs": current_abs,
-                "soh": 0.0,
+                "current": current_abs,  # Kirim mentah, nanti logika tanda di-handle atau asumsikan dari pembacaan
+                "power": round(total_voltage * current_abs, 2),
+                "soh": 100.0,
                 "cycleCount": cycle_count,
                 "temperature": round(sum(temperatures) / len(temperatures), 1) if temperatures else 0.0,
+                "statusBms": "STANDBY",
                 "cellVoltageAvg": avg_cell_voltage
             }
             return raw_data
@@ -140,59 +128,28 @@ class SGPower16S:
 
 if __name__ == "__main__":
     bms = SGPower16S(port=SERIAL_PORT, baudrate=BAUD_RATE)
-    raw_slave_data = bms.get_data()
+    slave_payload = bms.get_data()
 
-    if raw_slave_data:
+    if slave_payload:
         try:
-            collection_ref = db.collection(FIRESTORE_COLLECTION)
+            # Kirim data via HTTP POST ke API Next.js
+            data_json = json.dumps(slave_payload).encode('utf-8')
 
-            # Ambil data TERAKHIR di Firestore untuk ngecek tanda arus sebelumnya (+ / -)
-            last_snapshot = collection_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
+            req = urllib.request.Request(API_ENDPOINT, data=data_json, method="POST")
+            req.add_header('Content-Type', 'application/json')
 
-            # Tentukan tanda default (misal ikuti record terakhir, kalau kosong default negatif sesuai kondisi real lu)
-            sign_multiplier = -1  # Default ikut negatif (discharging)
+            if API_SECRET:
+                req.add_header('Authorization', f'Bearer {API_SECRET}')
 
-            if last_snapshot:
-                last_doc_data = last_snapshot[0].to_dict()
-                last_current = float(last_doc_data.get('slave', {}).get('current', -1.0))
-                if last_current > 0:
-                    sign_multiplier = 1
-                elif last_current < 0:
-                    sign_multiplier = -1
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result = response.read().decode('utf-8')
+                print(f"✅ Berhasil kirim data ke Next.js API: {result}")
 
-            # Terapkan tanda arus berdasarkan record terakhir
-            final_current = round(raw_slave_data['current_abs'] * sign_multiplier, 2)
-            final_power = round(raw_slave_data['voltage'] * final_current, 2)
-            status_bms = "CHARGING" if final_current > 0 else ("DISCHARGING" if final_current < 0 else "STANDBY")
-
-            # Rakit payload final untuk field 'slave'
-            slave_payload = {
-                "ah": raw_slave_data['ah'],
-                "soc": raw_slave_data['soc'],
-                "voltage": raw_slave_data['voltage'],
-                "current": final_current,
-                "power": final_power,
-                "soh": raw_slave_data['soh'],
-                "cycleCount": raw_slave_data['cycleCount'],
-                "temperature": raw_slave_data['temperature'],
-                "statusBms": status_bms,
-                "cellVoltageAvg": raw_slave_data['cellVoltageAvg']
-            }
-
-            if not last_snapshot:
-                print(f"⚠️ Tidak ada dokumen ditemukan di collection: {FIRESTORE_COLLECTION}")
-            else:
-                last_doc = last_snapshot[0]
-                last_id = last_doc.id
-
-                # Update field 'slave' dengan data terbaru
-                collection_ref.document(last_id).update({
-                    "slave": slave_payload
-                })
-
-                print(f"✅ Berhasil update field 'slave' [ID: {last_id}] | Status: {slave_payload['statusBms']} | Current: {slave_payload['current']}A | Power: {slave_payload['power']}W | Avg Cell: {slave_payload['cellVoltageAvg']}V")
-
-        except Exception as fb_err:
-            print(f"❌ Gagal update Firestore: {fb_err}")
+        except urllib.error.HTTPError as e:
+            print(f"❌ HTTP Error saat kirim ke API: {e.code} - {e.reason}")
+        except urllib.error.URLError as e:
+            print(f"❌ Gagal koneksi ke server Next.js: {e.reason}")
+        except Exception as err:
+            print(f"❌ Error tak terduga: {err}")
     else:
         print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Gagal membaca data dari port RS485 baterai.")
