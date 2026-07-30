@@ -1,2 +1,2 @@
 firebase-admin>=6.0.0
-git+https://github.com/areesmoon/bms-pylon-16s.git
+pyserial
