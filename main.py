@@ -24,6 +24,28 @@ API_ENDPOINT = config.get("api_endpoint", "http://IP_SERVER_NEXTJS:3000/api/bms/
 API_SECRET = config.get("api_secret", "")
 
 
+def fetch_initial_state_from_api():
+    """Ambil master.current terakhir dari API Next.js jika file state lokal belum ada"""
+    try:
+        req = urllib.request.Request(API_ENDPOINT, method="GET")
+        if API_SECRET:
+            req.add_header('Authorization', f'Bearer {API_SECRET}')
+
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            if res_data.get("success"):
+                master_current = res_data.get("masterCurrent", 0)
+                print(f"🌐 Berhasil sinkronisasi state awal dari master.current: {master_current} A")
+
+                # Tentukan multiplier berdasarkan master.current inverter (Inverter asli)
+                sign = 1 if master_current >= 0 else -1
+                return sign
+    except Exception as e:
+        print(f"⚠️ Gagal ambil state awal dari API (pakai default): {e}")
+
+    return -1  # Default aman jika server gagal di-fetch saat booting
+
+
 class SGPower16S:
     def __init__(self, port, baudrate, timeout=3):
         self.port = port
@@ -107,7 +129,7 @@ class SGPower16S:
             soc = (remain_ah / total_ah) * 100 if total_ah > 0 else 0
 
             # ====================================================
-            # LOGIKA PENENTUAN TANDA ARUS & STATUS VIA STATE LOKAL
+            # LOGIKA PENENTUAN TANDA ARUS & STATUS VIA STATE LOKAL / API GET
             # ====================================================
             sign_multiplier = -1
             status_bms = "DISCHARGING"
@@ -130,6 +152,10 @@ class SGPower16S:
                             status_bms = "CHARGING" if sign_multiplier == 1 else "DISCHARGING"
                     except:
                         pass
+            else:
+                # First run: Tarik data master.current dari API Next.js biar langsung akurat
+                sign_multiplier = fetch_initial_state_from_api()
+                status_bms = "CHARGING" if sign_multiplier == 1 else "DISCHARGING"
 
             # Jika arus absolut kecil sekali / 0, set STANDBY
             if current_abs < 0.1:
