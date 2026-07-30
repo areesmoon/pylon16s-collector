@@ -9,6 +9,7 @@ import urllib.error
 # LOAD KONFIGURASI DARI FILE EXTERNAL
 # ==========================================
 CONFIG_FILE = 'config.json'
+STATE_FILE = 'bms_state.json'
 
 if not os.path.exists(CONFIG_FILE):
     print(f"❌ File konfigurasi '{CONFIG_FILE}' tidak ditemukan! Buat dulu file-nya.")
@@ -18,7 +19,7 @@ with open(CONFIG_FILE, 'r') as f:
     config = json.load(f)
 
 SERIAL_PORT = config.get("serial_port", "/dev/ttyUSB0")
-BAUD_RATE = config.get("baud_rate", 9600)
+BAUD_RATE = int(config.get("baud_rate", 9600))
 API_ENDPOINT = config.get("api_endpoint", "http://IP_SERVER_NEXTJS:3000/api/bms/update-slave")
 API_SECRET = config.get("api_secret", "")
 
@@ -88,9 +89,7 @@ class SGPower16S:
             voltage_hex = tail[offset + 4:offset + 8]
 
             current_val = int(current_hex, 16)
-            # Tentukan estimasi tanda awal berdasarkan nilai heksadesimal atau biarkan positif dulu
-            # (Di API Next.js nanti bisa disesuaikan atau dibaca mutlak)
-            current_abs = abs(current_val / 10.0)
+            current_abs = current_val / 10.0
             total_voltage = int(voltage_hex, 16) / 1000.0
 
             user_defined = int(tail[offset + 12:offset + 14], 16)
@@ -107,16 +106,55 @@ class SGPower16S:
             total_ah = int(total_hex, 16) / 1000.0
             soc = (remain_ah / total_ah) * 100 if total_ah > 0 else 0
 
+            # ====================================================
+            # LOGIKA PENENTUAN TANDA ARUS & STATUS VIA STATE LOKAL
+            # ====================================================
+            sign_multiplier = -1
+            status_bms = "DISCHARGING"
+
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, 'r') as f:
+                    try:
+                        last_state = json.load(f)
+                        last_ah = last_state.get("last_ah", remain_ah)
+                        last_sign = last_state.get("last_sign", -1)
+
+                        if remain_ah > last_ah:
+                            sign_multiplier = 1
+                            status_bms = "CHARGING"
+                        elif remain_ah < last_ah:
+                            sign_multiplier = -1
+                            status_bms = "DISCHARGING"
+                        else:
+                            sign_multiplier = last_sign
+                            status_bms = "CHARGING" if sign_multiplier == 1 else "DISCHARGING"
+                    except:
+                        pass
+
+            # Jika arus absolut kecil sekali / 0, set STANDBY
+            if current_abs < 0.1:
+                status_bms = "STANDBY"
+                sign_multiplier = 1
+
+            final_current = round(current_abs * sign_multiplier, 2)
+
+            with open(STATE_FILE, 'w') as f:
+                json.dump({
+                    "last_ah": remain_ah,
+                    "last_sign": sign_multiplier
+                }, f)
+            # ====================================================
+
             raw_data = {
                 "ah": round(remain_ah, 2),
                 "soc": round(soc, 1),
                 "voltage": round(total_voltage, 2),
-                "current": current_abs,  # Kirim mentah, nanti logika tanda di-handle atau asumsikan dari pembacaan
-                "power": round(total_voltage * current_abs, 2),
+                "current": final_current,
+                "power": round(total_voltage * final_current, 2),
                 "soh": 100.0,
                 "cycleCount": cycle_count,
                 "temperature": round(sum(temperatures) / len(temperatures), 1) if temperatures else 0.0,
-                "statusBms": "STANDBY",
+                "statusBms": status_bms,
                 "cellVoltageAvg": avg_cell_voltage
             }
             return raw_data
