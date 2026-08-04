@@ -129,7 +129,7 @@ class SGPower16S:
             soc = (remain_ah / total_ah) * 100 if total_ah > 0 else 0
 
             # ====================================================
-            # LOGIKA PENENTUAN TANDA ARUS & STATUS VIA STATE LOKAL / API GET
+            # LOGIKA PENENTUAN TANDA ARUS & STATUS VIA STATE LOKAL
             # ====================================================
             sign_multiplier = -1
             status_bms = "DISCHARGING"
@@ -164,6 +164,7 @@ class SGPower16S:
 
             final_current = round(current_abs * sign_multiplier, 2)
 
+            # Simpan state terbaru ke file lokal bms_state.json
             with open(STATE_FILE, 'w') as f:
                 json.dump({
                     "last_ah": remain_ah,
@@ -200,7 +201,7 @@ if __name__ == "__main__":
 
     if slave_payload:
         try:
-            # Gunakan API_ENDPOINT_SLAVE untuk mengirim data murni insert ke koleksi slave
+            # Kirim data hasil pembacaan RS485 via HTTP POST ke endpoint insert-slave
             data_json = json.dumps(slave_payload).encode('utf-8')
 
             req = urllib.request.Request(API_ENDPOINT_SLAVE, data=data_json, method="POST")
