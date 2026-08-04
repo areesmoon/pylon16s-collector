@@ -172,8 +172,14 @@ class SGPower16S:
                 }, f)
             # ====================================================
 
-            # Generate epoch timestamp dalam milidetik
-            current_timestamp_ms = int(time.time() * 1000)
+            # ====================================================
+            # GENERATE TIMESTAMP FORMAT WIB STRING (Contoh: 2026-07-27T17:32:47+07:00)
+            # ====================================================
+            from datetime import datetime, timezone, timedelta
+            
+            # Zona waktu WIB (UTC +7)
+            wib_timezone = timezone(timedelta(hours=7))
+            current_timestamp_str = datetime.now(wib_timezone).strftime('%Y-%m-%dT%H:%M:%S+07:00')
 
             raw_data = {
                 "ah": round(remain_ah, 2),
@@ -186,7 +192,7 @@ class SGPower16S:
                 "temperature": round(sum(temperatures) / len(temperatures), 1) if temperatures else 0.0,
                 "statusBms": status_bms,
                 "cellVoltageAvg": avg_cell_voltage,
-                "timestamp": current_timestamp_ms
+                "timestamp": current_timestamp_str  # Format string WIB string
             }
             return raw_data
 
